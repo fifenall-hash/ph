@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>스마트 약품 통계 분석기 (Web)</title>
+    <!-- SheetJS 라이브러리 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        :root {
+            --primary: #4CAF50;
+            --danger: #f44336;
+            --info: #2196F3;
+            --warning: #FF9800;
+            --brown: #795548;
+            --purple: #9C27B0;
+            --bg-color: #f5f5f5;
+            --border-color: #ddd;
+        }
+        body { font-family: 'Malgun Gothic', sans-serif; margin: 0; padding: 20px; background-color: #fff; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; }
+        
+        /* Dropzone */
+        #drop-zone {
+            flex: 1; border: 4px dashed #757575; border-radius: 15px; background-color: var(--bg-color);
+            display: flex; justify-content: center; align-items: center; text-align: center;
+            font-size: 22px; color: #424242; font-weight: bold; transition: all 0.3s;
+        }
+        #drop-zone.dragover { background-color: #e8f5e9; border-color: var(--primary); }
+        
+        /* Workspace */
+        #workspace { display: none; flex-direction: column; height: 100%; }
+        
+        /* Controls */
+        .controls-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        select, input[type="text"] { padding: 6px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; color: white; transition: opacity 0.2s; }
+        button:hover { opacity: 0.8; }
+        .btn-reload { background-color: var(--danger); }
+        .btn-run { background-color: var(--primary); }
+        .btn-merge { background-color: var(--brown); }
+        .btn-merge.merged { background-color: var(--warning); }
+        .btn-search { background-color: var(--info); padding: 6px 12px; }
+        .btn-unhide { background-color: var(--purple); padding: 6px 12px; display: none; }
+        .btn-hide-row { background-color: #e0e0e0; color: #333; padding: 4px 8px; font-size: 12px; }
+
+        /* Status & Search */
+        #status-info { color: #d32f2f; font-weight: bold; font-size: 14px; white-space: pre-line; margin-bottom: 10px; flex: 1; }
+        
+        /* Tabs */
+        .tabs { display: flex; border-bottom: 2px solid var(--border-color); margin-bottom: 10px; }
+        .tab-btn { background: none; color: #333; border: none; padding: 10px 20px; cursor: pointer; font-size: 15px; border-bottom: 3px solid transparent; margin-bottom: -2px; border-radius: 0; }
+        .tab-btn.active { font-weight: bold; border-bottom-color: var(--info); }
+        
+        /* Tables */
+        .tab-content { display: none; flex: 1; overflow: auto; border: 1px solid var(--border-color); }
+        .tab-content.active { display: block; }
+        table { width: 100%; border-collapse: collapse; table-layout: auto; }
+        th, td { border: 1px solid var(--border-color); padding: 8px; text-align: center; }
+        th { background-color: var(--bg-color); position: sticky; top: 0; cursor: pointer; user-select: none; }
+        th:hover { background-color: #e0e0e0; }
+        tr.hidden { display: none; }
+        tr.highlight { background-color: #fff9c4 !important; }
+        tr:nth-child(even) { background-color: #fafafa; }
+    </style>
+</head>
+<body>
+
+    <div id="drop-zone">
+        이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.
+    </div>
+
+    <div id="workspace">
+        <div class="controls-row">
+            <button class="btn-reload" onclick="resetApp()">🔄 파일들 다시 올리기</button>
+            <span style="font-weight: bold; margin-left: 10px;">| 기기 설정:</span>
+            <select id="combo-device" onchange="updateDefaultProduct()"></select>
+            
+            <span style="font-weight: bold;">적용범위:</span>
+            <select id="combo-scope">
+                <option value="전체기기">전체기기</option>
+                <option value="해당기기">해당기기</option>
+            </select>
+            
+            <span style="font-weight: bold;">제품정보:</span>
+            <select id="combo-product">
+                <option value="208DO">208DO</option><option value="244DO">244DO</option>
+                <option value="300NS">300NS</option><option value="360NS">360NS</option>
+                <option value="420NS">420NS</option><option value="480NS">480NS</option>
+                <option value="576NS">576NS</option>
+            </select>
+            
+            <button class="btn-run" onclick="processData(true)">📊 조건에 맞춰 결과 갱신</button>
+            <button id="btn-merge" class="btn-merge" onclick="toggleMerge()">🔗 다중코드 개별로 보기</button>
+        </div>
+
+        <div class="controls-row" style="align-items: flex-start;">
+            <div id="status-info">데이터를 분석 중입니다...</div>
+        </div>
+
+        <div class="controls-row" style="background-color: var(--bg-color); padding: 10px; border-radius: 5px;">
+            <span style="font-weight: bold;">데이터 검색:</span>
+            <select id="combo-search-col">
+                <option value="약품명">약품명</option>
+                <option value="약품코드">약품코드</option>
+                <option value="번호">번호</option>
+            </select>
+            <input type="text" id="input-search" placeholder="검색어를 입력하고 Enter를 누르세요." style="width: 250px;" onkeypress="if(event.key==='Enter') performSearch()">
+            <button class="btn-search" onclick="performSearch()">🔍 검색 (다음 찾기)</button>
+            <button id="btn-unhide" class="btn-unhide" onclick="unhideAll()">👁️ 숨김 해제</button>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('out')">Out 목록</button>
+            <button class="tab-btn" onclick="switchTab('in')">In 목록</button>
+            <button class="tab-btn" onclick="switchTab('dup')">중복 목록</button>
+        </div>
+
+        <div id="tab-out" class="tab-content active">
+            <table id="table-out"><thead></thead><tbody></tbody></table>
+        </div>
+        <div id="tab-in" class="tab-content">
+            <table id="table-in"><thead></thead><tbody></tbody></table>
+        </div>
+        <div id="tab-dup" class="tab-content">
+            <table id="table-dup"><thead></thead><tbody></tbody></table>
+        </div>
+    </div>
+
+<script>
+    let rawAtdps = null;
+    let rawSettings = null;
+    let isMerged = true;
+    
+    let outData = [], inData = [], dupData = [];
+    let currentSort = { out: { col: '수량', asc: true }, in: { col: '수량', asc: false }, dup: { col: '번호', asc: true } };
+    let searchIndex = { out: -1, in: -1, dup: -1 };
+
+    const dropZone = document.getElementById('drop-zone');
+    const workspace = document.getElementById('workspace');
+    
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.xls') || f.name.endsWith('.xlsx'));
+        
+        if(files.length > 2) {
+            alert("파일이 3개 이상입니다.\n통계에 필요한 엑셀 파일 2개만 끌어다 놓아주세요."); return;
+        }
+        
+        let atdpsFile = null, settingsFile = null;
+        for (let file of files) {
+            const type = await checkFileType(file);
+            if (type === 'ATDPS') atdpsFile = file;
+            else if (type === 'SETTINGS') settingsFile = file;
+            else {
+                alert(`이 파일은 분석 양식에 맞지 않습니다.\n\n파일명: ${file.name}\n올바른 파일을 다시 끌어다 놓아주세요.`); return;
+            }
+        }
+
+        if (files.length === 2 && (!atdpsFile || !settingsFile)) {
+            alert("[ ATDPS 전송 약품 보고서 ]와 [ 약품 설정 ] 파일이 각각 하나씩 필요합니다.\n제대로 된 파일을 확인하고 다시 올려주세요.");
+            resetApp(); return;
+        }
+
+        if (atdpsFile && settingsFile) {
+            dropZone.innerHTML = "데이터를 처리 중입니다... 잠시만 기다려주세요.";
+            await loadData(atdpsFile, settingsFile);
+        } else {
+            let msg = "";
+            if (atdpsFile) msg += "[ ATDPS 전송 약품 보고서 ] 확인 완료\n";
+            if (settingsFile) msg += "[ 약품 설정 ] 확인 완료\n";
+            dropZone.innerHTML = msg + "<br>나머지 1개의 파일도 올려주세요.";
+        }
+    });
+
+    // ✨ 핵심 개조 부분: 파일의 Magic Byte를 검사하여 가짜 엑셀(TSV)을 완벽하게 걸러냅니다.
+    function readFile(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const buffer = e.target.result;
+                const uint8 = new Uint8Array(buffer);
+
+                // 파일 헤더(서명) 스캔
+                let isRealExcel = false;
+                if (uint8.length >= 4) {
+                    const hex = Array.from(uint8.slice(0, 4)).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+                    // 504B0304 = 일반 XLSX, D0CF11E0 = 옛날 구형 엑셀(XLS)
+                    if (hex === 'D0CF11E0' || hex === '504B0304') {
+                        isRealExcel = true;
+                    }
+                }
+
+                // 진짜 엑셀 파일인 경우
+                if (isRealExcel) {
+                    try {
+                        const workbook = XLSX.read(buffer, {type: 'array'});
+                        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                        resolve(XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""}));
+                    } catch(err) { resolve([]); }
+                } 
+                // 확장자만 XLS인 텍스트(TSV) 파일인 경우 (한글 복원)
+                else {
+                    let decoder = new TextDecoder('euc-kr'); // cp949 한글 디코딩
+                    let text = decoder.decode(buffer);
+                    
+                    // 혹시나 UTF-8로 저장된 텍스트일 경우를 대비한 2차 방어선
+                    if (!text.includes('약품') && !text.includes('ATDPS') && !text.includes('캐니스터')) {
+                        decoder = new TextDecoder('utf-8');
+                        text = decoder.decode(buffer);
+                    }
+
+                    // HTML 테이블 형태로 덮어씌워진 경우 방어
+                    if (text.toLowerCase().includes('<table')) {
+                        try {
+                            const workbook = XLSX.read(text, {type: 'string'});
+                            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                            resolve(XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""}));
+                            return;
+                        } catch(err) {}
+                    }
+
+                    // 텍스트 파일(TSV)을 직접 분해
+                    const rows = text.split('\n').map(r => r.split('\t').map(c => c.trim()));
+                    resolve(rows);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    async function checkFileType(file) {
+        let json = await readFile(file);
+        if (!json || json.length === 0) return "UNKNOWN";
+        
+        let headerText = "";
+        for(let i=0; i < Math.min(json.length, 10); i++) {
+            headerText += json[i].join("") + " ";
+        }
+        
+        let cleanText = headerText.replace(/\s+/g, '');
+        
+        if (cleanText.includes('[ATDPS') || cleanText.includes('ATDPS전송') || (cleanText.includes('약품코드') && cleanText.includes('총사용량'))) {
+            return 'ATDPS';
+        }
+        if (cleanText.includes('[약품설정]') || (cleanText.includes('약품코드') && cleanText.includes('일반약품명'))) {
+            return 'SETTINGS';
+        }
+        return "UNKNOWN";
+    }
+
+    function cleanCode(val) {
+        if (val === null || val === undefined || val === '') return "";
+        let str = String(val).trim();
+        if (!isNaN(str) && str.toUpperCase().includes('E')) return String(Math.floor(Number(str)));
+        if (!isNaN(str) && str !== "") return String(Math.floor(Number(str))); 
+        return str;
+    }
+
+    async function loadData(fileA, fileS) {
+        const jsonA = await readFile(fileA);
+        const jsonS = await readFile(fileS);
+
+        let startIdxA = -1, headA = [];
+        for(let i=0; i < Math.min(jsonA.length, 10); i++) {
+            let rowStr = jsonA[i].join("").replace(/\s+/g, "");
+            if (rowStr.includes("약품코드") && rowStr.includes("총사용량")) {
+                startIdxA = i + 1; 
+                headA = jsonA[i].map(c => String(c||"").replace(/\s+/g, ""));
+                break;
+            }
+        }
+
+        let startIdxS = -1, headS = [];
+        for(let i=0; i < Math.min(jsonS.length, 10); i++) {
+            let rowStr = jsonS[i].join("").replace(/\s+/g, "");
+            if (rowStr.includes("약품코드") && rowStr.includes("제품ID")) {
+                startIdxS = i + 1; 
+                headS = jsonS[i].map(c => String(c||"").replace(/\s+/g, ""));
+                break;
+            }
+        }
+        
+        if (startIdxA === -1 || startIdxS === -1) {
+            alert("데이터 구조(열 이름)를 찾을 수 없습니다. 열 이름(약품코드, 제품ID 등)이 정상적으로 들어있는지 확인해 주세요.");
+            resetApp(); return;
+        }
+
+        let ca_dev = headA.findIndex(c => c.includes("제품ID"));
+        let ca_code = headA.findIndex(c => c.includes("약품코드"));
+        let ca_name = headA.findIndex(c => c.includes("약품명"));
+        let ca_qty = headA.findIndex(c => c.includes("총사용량"));
+        let ca_cnt = headA.findIndex(c => c.includes("횟수"));
+
+        let cs_code = headS.findIndex(c => c.includes("약품코드"));
+        let cs_name = headS.findIndex(c => c.includes("일반약품명") || c.includes("약품명"));
+        let cs_can = headS.findIndex(c => c.includes("캐니스터번호"));
+        let cs_dev = headS.findIndex(c => c.includes("제품ID"));
+
+        rawAtdps = [];
+        for (let i = startIdxA; i < jsonA.length; i++) {
+            let row = jsonA[i];
+            if(!row || !row[ca_code]) continue;
+            rawAtdps.push({
+                deviceId: String(row[ca_dev]||"").trim(),
+                code: cleanCode(row[ca_code]),
+                name: String(row[ca_name]||"").trim(),
+                qty: Number(row[ca_qty]) || 0,
+                count: Number(row[ca_cnt]) || 0
+            });
+        }
+
+        rawSettings = [];
+        for (let i = startIdxS; i < jsonS.length; i++) {
+            let row = jsonS[i];
+            if(!row || !row[cs_can] || String(row[cs_can]).trim() === "") continue; 
+            rawSettings.push({
+                code: cleanCode(row[cs_code]),
+                name: String(row[cs_name]||"").trim(),
+                canNo: Number(row[cs_can]),
+                deviceId: String(row[cs_dev]||"").trim()
+            });
+        }
+
+        const totalCount = rawAtdps.reduce((sum, r) => sum + r.count, 0);
+        if (totalCount <= 10000) {
+            const proceed = confirm("데이터 양이 너무 작습니다.\n\n3개월 이상의 데이터 날짜 지정 후 우측 상단의 '검색' 버튼을 눌러서 해당 날짜 구간으로 데이터 갱신 후, 좌측 하단의 '엑셀' 버튼을 눌러 데이터를 다시 받은 것이 맞는지 다시 한번 확인해 주시기 바랍니다.\n\n이 데이터로 통계를 내는 것이 맞습니까?");
+            if (!proceed) { resetApp(); return; }
+        }
+
+        dropZone.style.display = 'none';
+        workspace.style.display = 'flex';
+        
+        updateDeviceCombo();
+        updateDefaultProduct();
+        processData(false);
+    }
+
+    function resetApp() {
+        rawAtdps = null; rawSettings = null;
+        document.getElementById('btn-unhide').style.display = 'none';
+        dropZone.innerHTML = "이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.";
+        dropZone.style.display = 'flex';
+        workspace.style.display = 'none';
+    }
+
+    function updateDeviceCombo() {
+        const devices = new Set();
+        rawAtdps.forEach(r => devices.add(r.deviceId));
+        rawSettings.forEach(r => devices.add(r.deviceId));
+        
+        const sorted = Array.from(devices).sort();
+        const combo = document.getElementById('combo-device');
+        combo.innerHTML = '';
+        sorted.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d; opt.textContent = d;
+            combo.appendChild(opt);
+        });
+    }
+
+    function updateDefaultProduct() {
+        const targetDevice = document.getElementById('combo-device').value;
+        let maxNum = 0;
+        rawSettings.forEach(r => {
+            if (r.deviceId === targetDevice && r.canNo > maxNum) maxNum = r.canNo;
+        });
+        
+        const products = [208, 244, 300, 360, 420, 480, 576];
+        let bestFit = 576;
+        for (let p of products) {
+            if (p >= maxNum) { bestFit = p; break; }
+        }
+        document.getElementById('combo-product').value = bestFit + "NS"; 
+        const opts = document.getElementById('combo-product').options;
+        for(let i=0; i<opts.length; i++) {
+            if(opts[i].value.startsWith(bestFit.toString())) {
+                document.getElementById('combo-product').selectedIndex = i; break;
+            }
+        }
+    }
+
+    function toggleMerge() {
+        isMerged = !isMerged;
+        const btn = document.getElementById('btn-merge');
+        if (isMerged) {
+            btn.textContent = "🔗 다중코드 개별로 보기";
+            btn.className = "btn-merge";
+            alert("중복코드가 성공적으로 하나로 통합되었습니다.");
+        } else {
+            btn.textContent = "🔗 다중코드 중복 통합하기";
+            btn.className = "btn-merge merged";
+            alert("중복코드가 개별 보기로 전환되었습니다.");
+        }
+        processData(false);
+    }
+
+    function processData(showPopup) {
+        if (!rawAtdps || !rawSettings) return;
+
+        const targetDevice = document.getElementById('combo-device').value;
+        const scope = document.getElementById('combo-scope').value;
+        const maxCan = parseInt(document.getElementById('combo-product').value.substring(0, 3));
+
+        const allDevices = Array.from(new Set(rawSettings.map(r => r.deviceId))).sort();
+        const otherDevices = allDevices.filter(d => d !== targetDevice);
+        
+        const deviceCanMap = {};
+        otherDevices.forEach(d => {
+            deviceCanMap[d] = {};
+            rawSettings.filter(r => r.deviceId === d).forEach(r => {
+                if(!deviceCanMap[d][r.code]) deviceCanMap[d][r.code] = r.canNo;
+            });
+        });
+
+        let filteredA = scope === '해당기기' ? rawAtdps.filter(r => r.deviceId === targetDevice) : rawAtdps;
+        const aggA = {};
+        filteredA.forEach(r => {
+            if (!aggA[r.code]) aggA[r.code] = { name: r.name, qty: 0, count: 0 };
+            aggA[r.code].qty += r.qty;
+            aggA[r.code].count += r.count;
+        });
+
+        let targetS = rawSettings.filter(r => r.deviceId === targetDevice);
+        let outBase = targetS.map(s => {
+            let a = aggA[s.code] || { qty: 0, count: 0 };
+            let row = { 약품코드: s.code, 약품명: s.name, 번호: s.canNo, 수량: a.qty, 횟수: a.count };
+            otherDevices.forEach(d => { row[d] = deviceCanMap[d][s.code] || ''; });
+            return row;
+        });
+
+        dupData = [];
+        if (isMerged) {
+            let numGroups = {};
+            outBase.forEach(r => {
+                if(!numGroups[r.번호]) numGroups[r.번호] = [];
+                numGroups[r.번호].push(r);
+            });
+
+            let newOutBase = [];
+            for (let num in numGroups) {
+                let group = numGroups[num];
+                let uniqueNames = new Set(group.map(g => g.약품명));
+                if (group.length > 1 && uniqueNames.size === 1) {
+                    let sumQty = group.reduce((s, g) => s + g.수량, 0);
+                    let sumCount = group.reduce((s, g) => s + g.횟수, 0);
+                    let best = group.reduce((prev, curr) => (prev.수량 > curr.수량) ? prev : curr);
+                    
+                    let mergedRow = { 약품코드: best.약품코드, 약품명: best.약품명, 번호: Number(num), 수량: sumQty, 횟수: sumCount };
+                    otherDevices.forEach(d => { mergedRow[d] = deviceCanMap[d][best.약품코드] || ''; });
+                    
+                    newOutBase.push(mergedRow);
+                    dupData.push({...mergedRow, 상태: '💡통합결과'});
+                } else {
+                    newOutBase.push(...group);
+                }
+            }
+            outBase = newOutBase;
+        }
+
+        let assignedCodes = new Set(outBase.map(r => r.약품코드));
+        inData = [];
+        for (let code in aggA) {
+            if (!assignedCodes.has(code)) {
+                let row = { 약품코드: code, 약품명: aggA[code].name, 수량: aggA[code].qty, 횟수: aggA[code].count };
+                otherDevices.forEach(d => { row[d] = deviceCanMap[d][code] || ''; });
+                inData.push(row);
+            }
+        }
+        outData = outBase;
+
+        let usedCans = new Set(outData.map(r => r.번호));
+        let missingCans = new Set();
+        for(let i=1; i<=maxCan; i++) if(!usedCans.has(i)) missingCans.add(i);
+        
+        const autos = { '오토1': [6,12,18], '오토2': [24,30,36], '오토3': [42,48,52], '오토4': [56,60,64] };
+        let usedAutos = [];
+        for (let aName in autos) {
+            let isSubset = autos[aName].every(val => missingCans.has(val));
+            if (isSubset) {
+                usedAutos.push(aName);
+                autos[aName].forEach(val => missingCans.delete(val));
+            }
+        }
+        let missingList = Array.from(missingCans).sort((a,b)=>a-b);
+
+        let counts = {};
+        outData.forEach(r => { counts[r.번호] = (counts[r.번호] || 0) + 1; });
+        let dupNums = Object.keys(counts).filter(k => counts[k] > 1).map(Number);
+        
+        let dupDiffName = [], dupSameName = [];
+        dupNums.forEach(num => {
+            let names = new Set(outData.filter(r => r.번호 === num).map(r => r.약품명));
+            if (names.size > 1) dupDiffName.push(num);
+            else dupSameName.push(num);
+            
+            outData.filter(r => r.번호 === num).forEach(r => {
+                dupData.push({...r, 상태: '원본'});
+            });
+        });
+
+        let tMiss = missingList.length ? `미사용: ${missingList.join(', ')}` : "미사용: 없음";
+        let tAuto = usedAutos.length ? `오토사용: ${usedAutos.join(', ')}` : "오토사용: 없음";
+        let tDup1 = dupDiffName.length ? `중복지정: ${dupDiffName.sort((a,b)=>a-b).join(', ')}` : "중복지정: 없음";
+        let tDup2 = dupSameName.length ? `중복코드: ${dupSameName.sort((a,b)=>a-b).join(', ')}` : "중복코드: 없음";
+        
+        document.getElementById('status-info').innerHTML = `${tMiss}<br>${tAuto}<br>${tDup1}<br>${tDup2}`;
+
+        renderTable('out', outData, ['숨기기', '약품코드', '약품명', '번호', '수량', '횟수', ...otherDevices]);
+        renderTable('in', inData, ['숨기기', '약품코드', '약품명', '수량', '횟수', ...otherDevices]);
+        renderTable('dup', dupData, ['상태', '약품코드', '약품명', '번호', '수량', '횟수', ...otherDevices]);
+
+        if (showPopup) alert("데이터 갱신이 완료되었습니다.");
+    }
+
+    function renderTable(tabId, data, columns) {
+        const tbody = document.querySelector(`#table-${tabId} tbody`);
+        const thead = document.querySelector(`#table-${tabId} thead`);
+        tbody.innerHTML = ''; thead.innerHTML = '';
+        
+        let trH = document.createElement('tr');
+        columns.forEach(col => {
+            let th = document.createElement('th');
+            th.textContent = col;
+            if (col !== '숨기기') {
+                th.onclick = () => {
+                    let asc = currentSort[tabId].col === col ? !currentSort[tabId].asc : true;
+                    currentSort[tabId] = { col: col, asc: asc };
+                    sortData(tabId, col, asc);
+                    renderTable(tabId, data, columns);
+                };
+            }
+            trH.appendChild(th);
+        });
+        thead.appendChild(trH);
+
+        let sortConf = currentSort[tabId];
+        data.sort((a, b) => {
+            let valA = a[sortConf.col]; let valB = b[sortConf.col];
+            if (valA === '' || valA == null) return 1; 
+            if (valB === '' || valB == null) return -1;
+            if (typeof valA === 'string') {
+                return sortConf.asc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            } else {
+                return sortConf.asc ? valA - valB : valB - valA;
+            }
+        });
+
+        data.forEach(row => {
+            let tr = document.createElement('tr');
+            columns.forEach(col => {
+                let td = document.createElement('td');
+                if (col === '숨기기') {
+                    let btn = document.createElement('button');
+                    btn.className = 'btn-hide-row'; btn.textContent = '숨기기';
+                    btn.onclick = function() { tr.classList.add('hidden'); document.getElementById('btn-unhide').style.display = 'inline-block'; };
+                    td.appendChild(btn);
+                } else {
+                    td.textContent = row[col];
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+    }
+
+    function sortData(tabId, col, asc) {}
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        
+        document.getElementById(`tab-${tabId}`).classList.add('active');
+        event.target.classList.add('active');
+        searchIndex[tabId] = -1; 
+    }
+
+    function unhideAll() {
+        document.querySelectorAll('tr.hidden').forEach(tr => tr.classList.remove('hidden'));
+        document.getElementById('btn-unhide').style.display = 'none';
+    }
+
+    function performSearch() {
+        const keyword = document.getElementById('input-search').value.trim().toLowerCase();
+        if (!keyword) return;
+
+        const activeTabBtn = document.querySelector('.tab-btn.active');
+        let tabId = 'out';
+        if (activeTabBtn.textContent.includes('In')) tabId = 'in';
+        else if (activeTabBtn.textContent.includes('중복')) tabId = 'dup';
+
+        const colName = document.getElementById('combo-search-col').value;
+        const thead = document.querySelector(`#table-${tabId} thead tr`);
+        let targetColIdx = -1;
+        
+        Array.from(thead.children).forEach((th, idx) => {
+            if (th.textContent === colName) targetColIdx = idx;
+        });
+
+        if (targetColIdx === -1) {
+            alert(`현재 열려있는 목록에는 '${colName}' 열이 존재하지 않습니다.\n검색 설정을 변경해 주세요.`); return;
+        }
+
+        const tbody = document.querySelector(`#table-${tabId} tbody`);
+        const rows = Array.from(tbody.children);
+        
+        rows.forEach(r => r.classList.remove('highlight'));
+
+        let start = searchIndex[tabId] + 1;
+        let found = false;
+
+        for (let i = 0; i < rows.length; i++) {
+            let rIdx = (start + i) % rows.length;
+            let tr = rows[rIdx];
+            if (tr.classList.contains('hidden')) continue;
+            
+            let text = tr.children[targetColIdx].textContent.toLowerCase();
+            if (text.includes(keyword)) {
+                searchIndex[tabId] = rIdx;
+                tr.classList.add('highlight');
+                tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) alert("일치하는 데이터가 더 이상 없습니다.");
+    }
+</script>
+</body>
+</html>
