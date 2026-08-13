@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>스마트 약품 통계 분석기 (Web)</title>
-    <!-- SheetJS 라이브러리 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         :root {
@@ -43,8 +42,29 @@
         .btn-unhide { background-color: var(--purple); padding: 6px 12px; display: none; }
         .btn-hide-row { background-color: #e0e0e0; color: #333; padding: 4px 8px; font-size: 12px; }
 
-        /* Status & Search */
-        #status-info { color: #d32f2f; font-weight: bold; font-size: 14px; white-space: pre-line; margin-bottom: 10px; flex: 1; }
+        /* Status 4 Grid Layout */
+        #status-info { 
+            display: grid; 
+            grid-template-columns: repeat(4, 1fr); /* 정확히 4등분 */
+            width: 100%; 
+            color: #d32f2f; 
+            font-weight: bold; 
+            font-size: 14px; 
+            margin-bottom: 10px; 
+            background-color: #fff3f3; /* 연한 붉은빛 배경 */
+            border: 1px solid #ffcdd2; 
+            border-radius: 5px;
+        }
+        #status-info > div { 
+            padding: 10px; 
+            text-align: center; 
+            border-right: 1px solid #ffcdd2; /* 구역별 구분선 */
+            word-break: keep-all; 
+            line-height: 1.4;
+        }
+        #status-info > div:last-child { 
+            border-right: none; /* 마지막 구역은 우측 선 제거 */
+        }
         
         /* Tabs */
         .tabs { display: flex; border-bottom: 2px solid var(--border-color); margin-bottom: 10px; }
@@ -93,8 +113,11 @@
             <button id="btn-merge" class="btn-merge" onclick="toggleMerge()">🔗 다중코드 개별로 보기</button>
         </div>
 
-        <div class="controls-row" style="align-items: flex-start;">
-            <div id="status-info">데이터를 분석 중입니다...</div>
+        <div class="controls-row">
+            <!-- 4등분 그리드 영역 -->
+            <div id="status-info">
+                <div style="grid-column: span 4; text-align: left; border: none;">데이터를 분석 중입니다...</div>
+            </div>
         </div>
 
         <div class="controls-row" style="background-color: var(--bg-color); padding: 10px; border-radius: 5px;">
@@ -175,7 +198,6 @@
         }
     });
 
-    // ✨ 핵심 개조 부분: 파일의 Magic Byte를 검사하여 가짜 엑셀(TSV)을 완벽하게 걸러냅니다.
     function readFile(file) {
         return new Promise((resolve) => {
             const reader = new FileReader();
@@ -183,17 +205,14 @@
                 const buffer = e.target.result;
                 const uint8 = new Uint8Array(buffer);
 
-                // 파일 헤더(서명) 스캔
                 let isRealExcel = false;
                 if (uint8.length >= 4) {
                     const hex = Array.from(uint8.slice(0, 4)).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
-                    // 504B0304 = 일반 XLSX, D0CF11E0 = 옛날 구형 엑셀(XLS)
                     if (hex === 'D0CF11E0' || hex === '504B0304') {
                         isRealExcel = true;
                     }
                 }
 
-                // 진짜 엑셀 파일인 경우
                 if (isRealExcel) {
                     try {
                         const workbook = XLSX.read(buffer, {type: 'array'});
@@ -201,18 +220,15 @@
                         resolve(XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""}));
                     } catch(err) { resolve([]); }
                 } 
-                // 확장자만 XLS인 텍스트(TSV) 파일인 경우 (한글 복원)
                 else {
-                    let decoder = new TextDecoder('euc-kr'); // cp949 한글 디코딩
+                    let decoder = new TextDecoder('euc-kr'); 
                     let text = decoder.decode(buffer);
                     
-                    // 혹시나 UTF-8로 저장된 텍스트일 경우를 대비한 2차 방어선
                     if (!text.includes('약품') && !text.includes('ATDPS') && !text.includes('캐니스터')) {
                         decoder = new TextDecoder('utf-8');
                         text = decoder.decode(buffer);
                     }
 
-                    // HTML 테이블 형태로 덮어씌워진 경우 방어
                     if (text.toLowerCase().includes('<table')) {
                         try {
                             const workbook = XLSX.read(text, {type: 'string'});
@@ -222,7 +238,6 @@
                         } catch(err) {}
                     }
 
-                    // 텍스트 파일(TSV)을 직접 분해
                     const rows = text.split('\n').map(r => r.split('\t').map(c => c.trim()));
                     resolve(rows);
                 }
@@ -501,12 +516,18 @@
             });
         });
 
-        let tMiss = missingList.length ? `미사용: ${missingList.join(', ')}` : "미사용: 없음";
-        let tAuto = usedAutos.length ? `오토사용: ${usedAutos.join(', ')}` : "오토사용: 없음";
-        let tDup1 = dupDiffName.length ? `중복지정: ${dupDiffName.sort((a,b)=>a-b).join(', ')}` : "중복지정: 없음";
-        let tDup2 = dupSameName.length ? `중복코드: ${dupSameName.sort((a,b)=>a-b).join(', ')}` : "중복코드: 없음";
+        let tMiss = missingList.length ? `미사용: <br>${missingList.join(', ')}` : "미사용: <br>없음";
+        let tAuto = usedAutos.length ? `오토사용: <br>${usedAutos.join(', ')}` : "오토사용: <br>없음";
+        let tDup1 = dupDiffName.length ? `중복지정: <br>${dupDiffName.sort((a,b)=>a-b).join(', ')}` : "중복지정: <br>없음";
+        let tDup2 = dupSameName.length ? `중복코드: <br>${dupSameName.sort((a,b)=>a-b).join(', ')}` : "중복코드: <br>없음";
         
-        document.getElementById('status-info').innerHTML = `${tMiss}<br>${tAuto}<br>${tDup1}<br>${tDup2}`;
+        // ✨ HTML로 4개의 각각 다른 div 영역으로 출력되도록 변경
+        document.getElementById('status-info').innerHTML = `
+            <div>${tMiss}</div>
+            <div>${tAuto}</div>
+            <div>${tDup1}</div>
+            <div>${tDup2}</div>
+        `;
 
         renderTable('out', outData, ['숨기기', '약품코드', '약품명', '번호', '수량', '횟수', ...otherDevices]);
         renderTable('in', inData, ['숨기기', '약품코드', '약품명', '수량', '횟수', ...otherDevices]);
