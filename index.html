@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>스마트 약품 통계 분석기 (Web)</title>
+    
+    <!-- 아이콘(파비콘) 설정 -->
+    <link rel="icon" href="icon.ico" type="image/x-icon">
+    <link rel="icon" href="icon.png" type="image/png">
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         :root {
@@ -21,11 +26,33 @@
         /* Dropzone */
         #drop-zone {
             flex: 1; border: 4px dashed #757575; border-radius: 15px; background-color: var(--bg-color);
-            display: flex; justify-content: center; align-items: center; text-align: center;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
             font-size: 22px; color: #424242; font-weight: bold; transition: all 0.3s;
         }
         #drop-zone.dragover { background-color: #e8f5e9; border-color: var(--primary); }
         
+        /* Help Buttons */
+        .btn-help {
+            background-color: #607D8B; color: white; padding: 10px 25px; font-size: 15px; 
+            border-radius: 25px; border: none; cursor: pointer; box-shadow: 0 3px 6px rgba(0,0,0,0.15);
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        .btn-help:hover { background-color: #455A64; transform: scale(1.02); }
+        .help-container { margin-top: 30px; display: flex; flex-direction: column; gap: 12px; }
+
+        /* Help Modal (Popup) */
+        #help-modal {
+            display: none; position: fixed; z-index: 9999; left: 0; top: 0;
+            width: 100%; height: 100%; background-color: rgba(0,0,0,0.75);
+            justify-content: center; align-items: center; flex-direction: column;
+        }
+        .modal-content { max-width: 90%; max-height: 85vh; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        .modal-close {
+            color: white; font-size: 40px; font-weight: bold; align-self: flex-end; 
+            margin-right: 5%; margin-bottom: 10px; cursor: pointer;
+        }
+        .modal-close:hover { color: #ccc; }
+
         /* Workspace */
         #workspace { display: none; flex-direction: column; height: 100%; }
         
@@ -44,27 +71,15 @@
 
         /* Status 4 Grid Layout */
         #status-info { 
-            display: grid; 
-            grid-template-columns: repeat(4, 1fr); /* 정확히 4등분 */
-            width: 100%; 
-            color: #d32f2f; 
-            font-weight: bold; 
-            font-size: 14px; 
-            margin-bottom: 10px; 
-            background-color: #fff3f3; /* 연한 붉은빛 배경 */
-            border: 1px solid #ffcdd2; 
-            border-radius: 5px;
+            display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; 
+            color: #d32f2f; font-weight: bold; font-size: 14px; margin-bottom: 10px; 
+            background-color: #fff3f3; border: 1px solid #ffcdd2; border-radius: 5px;
         }
         #status-info > div { 
-            padding: 10px; 
-            text-align: center; 
-            border-right: 1px solid #ffcdd2; /* 구역별 구분선 */
-            word-break: keep-all; 
-            line-height: 1.4;
+            padding: 10px; text-align: center; border-right: 1px solid #ffcdd2; 
+            word-break: keep-all; line-height: 1.4;
         }
-        #status-info > div:last-child { 
-            border-right: none; /* 마지막 구역은 우측 선 제거 */
-        }
+        #status-info > div:last-child { border-right: none; }
         
         /* Tabs */
         .tabs { display: flex; border-bottom: 2px solid var(--border-color); margin-bottom: 10px; }
@@ -85,8 +100,20 @@
 </head>
 <body>
 
+    <!-- 도움말 팝업(모달) -->
+    <div id="help-modal" onclick="closeHelp()">
+        <span class="modal-close">&times;</span>
+        <img id="modal-img" class="modal-content" src="" alt="도움말 이미지" onclick="event.stopPropagation()">
+    </div>
+
     <div id="drop-zone">
-        이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.
+        <div id="drop-message">
+            이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.
+        </div>
+        <div class="help-container">
+            <button class="btn-help" onclick="showHelp('help1.png', event)">💡 어떤 파일을 올려야 할지 모른다면 여기를 클릭</button>
+            <button class="btn-help" onclick="showHelp('help2.png', event)">💡 'ATDPS 전송 약품 보고서'가 안 보인다면 여기를 클릭</button>
+        </div>
     </div>
 
     <div id="workspace">
@@ -114,7 +141,6 @@
         </div>
 
         <div class="controls-row">
-            <!-- 4등분 그리드 영역 -->
             <div id="status-info">
                 <div style="grid-column: span 4; text-align: left; border: none;">데이터를 분석 중입니다...</div>
             </div>
@@ -161,6 +187,29 @@
     const dropZone = document.getElementById('drop-zone');
     const workspace = document.getElementById('workspace');
     
+    // 도움말 팝업 함수
+    function showHelp(imgSrc, event) {
+        if(event) event.stopPropagation(); // 버튼 클릭 시 드롭존 이벤트 방지
+        document.getElementById('modal-img').src = imgSrc;
+        document.getElementById('help-modal').style.display = 'flex';
+    }
+    
+    function closeHelp() {
+        document.getElementById('help-modal').style.display = 'none';
+        document.getElementById('modal-img').src = '';
+    }
+    
+    // 초기 시작 화면 렌더링 함수
+    function getDropZoneHTML(msgText) {
+        return `
+            <div id="drop-message">${msgText}</div>
+            <div class="help-container">
+                <button class="btn-help" onclick="showHelp('help1.png', event)">💡 어떤 파일을 올려야 할지 모른다면 여기를 클릭</button>
+                <button class="btn-help" onclick="showHelp('help2.png', event)">💡 'ATDPS 전송 약품 보고서'가 안 보인다면 여기를 클릭</button>
+            </div>
+        `;
+    }
+
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
     dropZone.addEventListener('drop', async (e) => {
@@ -188,13 +237,13 @@
         }
 
         if (atdpsFile && settingsFile) {
-            dropZone.innerHTML = "데이터를 처리 중입니다... 잠시만 기다려주세요.";
+            dropZone.innerHTML = `<div id="drop-message">데이터를 처리 중입니다... 잠시만 기다려주세요.</div>`;
             await loadData(atdpsFile, settingsFile);
         } else {
             let msg = "";
-            if (atdpsFile) msg += "[ ATDPS 전송 약품 보고서 ] 확인 완료\n";
-            if (settingsFile) msg += "[ 약품 설정 ] 확인 완료\n";
-            dropZone.innerHTML = msg + "<br>나머지 1개의 파일도 올려주세요.";
+            if (atdpsFile) msg += "[ ATDPS 전송 약품 보고서 ] 확인 완료<br>";
+            if (settingsFile) msg += "[ 약품 설정 ] 확인 완료<br>";
+            dropZone.innerHTML = getDropZoneHTML(msg + "나머지 1개의 파일도 올려주세요.");
         }
     });
 
@@ -356,7 +405,10 @@
     function resetApp() {
         rawAtdps = null; rawSettings = null;
         document.getElementById('btn-unhide').style.display = 'none';
-        dropZone.innerHTML = "이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.";
+        
+        const defaultMsg = "이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.";
+        dropZone.innerHTML = getDropZoneHTML(defaultMsg);
+        
         dropZone.style.display = 'flex';
         workspace.style.display = 'none';
     }
@@ -521,7 +573,6 @@
         let tDup1 = dupDiffName.length ? `중복지정: <br>${dupDiffName.sort((a,b)=>a-b).join(', ')}` : "중복지정: <br>없음";
         let tDup2 = dupSameName.length ? `중복코드: <br>${dupSameName.sort((a,b)=>a-b).join(', ')}` : "중복코드: <br>없음";
         
-        // ✨ HTML로 4개의 각각 다른 div 영역으로 출력되도록 변경
         document.getElementById('status-info').innerHTML = `
             <div>${tMiss}</div>
             <div>${tAuto}</div>
