@@ -53,6 +53,27 @@
         }
         .modal-close:hover { color: #ccc; }
 
+        /* Device Choice Modal */
+        #device-choice-modal {
+            display: none; position: fixed; z-index: 10000; left: 0; top: 0;
+            width: 100%; height: 100%; background-color: rgba(0,0,0,0.6);
+            justify-content: center; align-items: center;
+        }
+        .choice-box {
+            background: white; padding: 30px 40px; border-radius: 12px;
+            text-align: center; box-shadow: 0 4px 25px rgba(0,0,0,0.3); width: 320px;
+        }
+        .choice-box h3 { margin-top: 0; color: #333; margin-bottom: 20px; }
+        .choice-btn {
+            display: block; width: 100%; padding: 14px; margin: 12px 0;
+            background-color: var(--primary); color: white; border: none;
+            border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .choice-btn:hover { background-color: #388E3C; }
+        .choice-btn.alt { background-color: #607D8B; }
+        .choice-btn.alt:hover { background-color: #455A64; }
+
         /* Workspace */
         #workspace { display: none; flex-direction: column; height: 100%; }
         
@@ -106,6 +127,16 @@
         <img id="modal-img" class="modal-content" src="" alt="도움말 이미지" onclick="event.stopPropagation()">
     </div>
 
+    <!-- 기기 선택 팝업(모달) -->
+    <div id="device-choice-modal">
+        <div class="choice-box">
+            <h3 id="device-choice-title">기기를 확인해주세요.</h3>
+            <button id="btn-choice-1" class="choice-btn"></button>
+            <button id="btn-choice-2" class="choice-btn alt"></button>
+        </div>
+    </div>
+
+    <!-- 파일 드롭존 -->
     <div id="drop-zone">
         <div id="drop-message">
             이곳에<br>[ ATDPS 전송 약품 보고서 ] 와 [ 약품 설정 ] 엑셀 파일 두 개를<br>함께 끌어다 놓아주세요.
@@ -116,11 +147,12 @@
         </div>
     </div>
 
+    <!-- 메인 작업 화면 -->
     <div id="workspace">
         <div class="controls-row">
             <button class="btn-reload" onclick="resetApp()">🔄 파일들 다시 올리기</button>
             <span style="font-weight: bold; margin-left: 10px;">| 기기 설정:</span>
-            <select id="combo-device" onchange="updateDefaultProduct()"></select>
+            <select id="combo-device" onchange="handleDeviceChange()"></select>
             
             <span style="font-weight: bold;">적용범위:</span>
             <select id="combo-scope">
@@ -130,9 +162,14 @@
             
             <span style="font-weight: bold;">제품정보:</span>
             <select id="combo-product">
-                <option value="208DO">208DO</option><option value="244DO">244DO</option>
-                <option value="300NS">300NS</option><option value="360NS">360NS</option>
-                <option value="420NS">420NS</option><option value="480NS">480NS</option>
+                <option value="207DO">207DO</option>
+                <option value="208DO">208DO</option>
+                <option value="243DO">243DO</option>
+                <option value="244DO">244DO</option>
+                <option value="300NS">300NS</option>
+                <option value="360NS">360NS</option>
+                <option value="420NS">420NS</option>
+                <option value="480NS">480NS</option>
                 <option value="576NS">576NS</option>
             </select>
             
@@ -184,12 +221,19 @@
     let currentSort = { out: { col: '수량', asc: true }, in: { col: '수량', asc: false }, dup: { col: '번호', asc: true } };
     let searchIndex = { out: -1, in: -1, dup: -1 };
 
+    // 기기별 맞춤 오토 넘버링 (추가/수정이 필요할 경우 여기에 작성)
+    const autoMap = {
+        '207': { '오토1': [7, 14, 21], '오토2': [28, 35, 42], '오토3': [49, 55, 60], '오토4': [65, 70, 75] },
+        '208': { '오토1': [6, 12, 18], '오토2': [24, 30, 36], '오토3': [42, 48, 52], '오토4': [56, 60, 64] },
+        '243': { '오토1': [6, 12, 18], '오토2': [24, 30, 36], '오토3': [42, 47, 51], '오토4': [55, 59, 63] },
+        '360': { '오토1': [6, 12, 18, 24], '오토2': [66, 72, 78, 84], '오토3': [126, 132, 138, 144], '오토4': [186, 192, 198, 204], '오토5': [246, 252, 258, 264], '오토6': [306, 312, 318, 324] }
+    };
+
     const dropZone = document.getElementById('drop-zone');
     const workspace = document.getElementById('workspace');
     
-    // 도움말 팝업 함수
     function showHelp(imgSrc, event) {
-        if(event) event.stopPropagation(); // 버튼 클릭 시 드롭존 이벤트 방지
+        if(event) event.stopPropagation(); 
         document.getElementById('modal-img').src = imgSrc;
         document.getElementById('help-modal').style.display = 'flex';
     }
@@ -198,8 +242,31 @@
         document.getElementById('help-modal').style.display = 'none';
         document.getElementById('modal-img').src = '';
     }
+
+    function askDeviceChoice(maxNum) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('device-choice-modal');
+            const title = document.getElementById('device-choice-title');
+            const btn1 = document.getElementById('btn-choice-1');
+            const btn2 = document.getElementById('btn-choice-2');
+
+            title.innerHTML = `기기를 확인해주세요.<br><span style="font-size:14px; color:#555; font-weight:normal;">(확인된 최고 번호: ${maxNum}번)</span>`;
+            
+            if (maxNum === 207) {
+                btn1.textContent = "207DO [구형]";
+                btn1.onclick = () => { modal.style.display = 'none'; resolve('207DO'); };
+                btn2.textContent = "208DO (208번 미사용)";
+                btn2.onclick = () => { modal.style.display = 'none'; resolve('208DO'); };
+            } else if (maxNum === 243) {
+                btn1.textContent = "243DO [구형]";
+                btn1.onclick = () => { modal.style.display = 'none'; resolve('243DO'); };
+                btn2.textContent = "244DO (244번 미사용)";
+                btn2.onclick = () => { modal.style.display = 'none'; resolve('244DO'); };
+            }
+            modal.style.display = 'flex';
+        });
+    }
     
-    // 초기 시작 화면 렌더링 함수
     function getDropZoneHTML(msgText) {
         return `
             <div id="drop-message">${msgText}</div>
@@ -305,13 +372,8 @@
         }
         
         let cleanText = headerText.replace(/\s+/g, '');
-        
-        if (cleanText.includes('[ATDPS') || cleanText.includes('ATDPS전송') || (cleanText.includes('약품코드') && cleanText.includes('총사용량'))) {
-            return 'ATDPS';
-        }
-        if (cleanText.includes('[약품설정]') || (cleanText.includes('약품코드') && cleanText.includes('일반약품명'))) {
-            return 'SETTINGS';
-        }
+        if (cleanText.includes('[ATDPS') || cleanText.includes('ATDPS전송') || (cleanText.includes('약품코드') && cleanText.includes('총사용량'))) return 'ATDPS';
+        if (cleanText.includes('[약품설정]') || (cleanText.includes('약품코드') && cleanText.includes('일반약품명'))) return 'SETTINGS';
         return "UNKNOWN";
     }
 
@@ -398,7 +460,7 @@
         workspace.style.display = 'flex';
         
         updateDeviceCombo();
-        updateDefaultProduct();
+        await updateDefaultProduct();
         processData(false);
     }
 
@@ -427,26 +489,37 @@
             combo.appendChild(opt);
         });
     }
+    
+    // 기기 설정 변경 시 자동으로 모델 추론 후 통계 갱신
+    async function handleDeviceChange() {
+        await updateDefaultProduct();
+        // 기기 변경 시에는 알림창 없이 즉시 반영
+    }
 
-    function updateDefaultProduct() {
+    async function updateDefaultProduct() {
         const targetDevice = document.getElementById('combo-device').value;
         let maxNum = 0;
         rawSettings.forEach(r => {
             if (r.deviceId === targetDevice && r.canNo > maxNum) maxNum = r.canNo;
         });
         
-        const products = [208, 244, 300, 360, 420, 480, 576];
-        let bestFit = 576;
-        for (let p of products) {
-            if (p >= maxNum) { bestFit = p; break; }
-        }
-        document.getElementById('combo-product').value = bestFit + "NS"; 
-        const opts = document.getElementById('combo-product').options;
-        for(let i=0; i<opts.length; i++) {
-            if(opts[i].value.startsWith(bestFit.toString())) {
-                document.getElementById('combo-product').selectedIndex = i; break;
+        let bestFit = "";
+        if (maxNum === 207 || maxNum === 243) {
+            // 사용자에게 구형/미사용 여부를 묻는 팝업
+            bestFit = await askDeviceChoice(maxNum);
+        } else {
+            const products = [207, 208, 243, 244, 300, 360, 420, 480, 576];
+            let matched = 576;
+            for (let p of products) {
+                if (p >= maxNum) { matched = p; break; }
             }
+            if (matched === 207) bestFit = "207DO";
+            else if (matched === 208) bestFit = "208DO";
+            else if (matched === 243) bestFit = "243DO";
+            else if (matched === 244) bestFit = "244DO";
+            else bestFit = matched + "NS"; 
         }
+        document.getElementById('combo-product').value = bestFit; 
     }
 
     function toggleMerge() {
@@ -469,7 +542,10 @@
 
         const targetDevice = document.getElementById('combo-device').value;
         const scope = document.getElementById('combo-scope').value;
-        const maxCan = parseInt(document.getElementById('combo-product').value.substring(0, 3));
+        
+        const productVal = document.getElementById('combo-product').value;
+        const productPrefix = productVal.replace(/[^0-9]/g, ''); // 숫자만 추출 (예: '208DO' -> '208')
+        const maxCan = parseInt(productPrefix);
 
         const allDevices = Array.from(new Set(rawSettings.map(r => r.deviceId))).sort();
         const otherDevices = allDevices.filter(d => d !== targetDevice);
@@ -542,13 +618,15 @@
         let missingCans = new Set();
         for(let i=1; i<=maxCan; i++) if(!usedCans.has(i)) missingCans.add(i);
         
-        const autos = { '오토1': [6,12,18], '오토2': [24,30,36], '오토3': [42,48,52], '오토4': [56,60,64] };
+        // 기기별 등록된 오토 배열 가져오기 (없으면 빈 객체 반환)
+        const currentAutos = autoMap[productPrefix] || {}; 
         let usedAutos = [];
-        for (let aName in autos) {
-            let isSubset = autos[aName].every(val => missingCans.has(val));
+        
+        for (let aName in currentAutos) {
+            let isSubset = currentAutos[aName].every(val => missingCans.has(val));
             if (isSubset) {
                 usedAutos.push(aName);
-                autos[aName].forEach(val => missingCans.delete(val));
+                currentAutos[aName].forEach(val => missingCans.delete(val));
             }
         }
         let missingList = Array.from(missingCans).sort((a,b)=>a-b);
